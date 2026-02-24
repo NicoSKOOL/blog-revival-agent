@@ -39,6 +39,7 @@ TONE & VOICE (critical — do this first):
 - The rewrite MUST sound like the same person wrote it. Do not homogenise or make it generic
 - If the original is conversational, keep it conversational. If it's technical, keep it technical
 - Preserve any recurring phrases, stylistic quirks, or structural habits the author uses
+- NEVER use em dashes (—) anywhere in the post. Replace them with a colon, comma, parentheses, or split into two sentences instead
 
 CAPSULE CONTENT STRUCTURE (apply to 60% of H2 sections):
 - H2 heading must be phrased as a question
@@ -61,6 +62,13 @@ INTERNAL LINKS (important):
 - Use the FULL URL provided for each page — do not shorten to a relative path
 - Format: [contextual anchor text](https://full-url-from-sitemap)
 - Anchor text must be natural and contextual, never "click here"
+
+FAQ SECTION (required, append at the very end of the post):
+- Add a ## Frequently Asked Questions section as the final section
+- Include 3 to 5 questions that readers of this topic are likely to ask
+- The questions MUST be different from any question already answered or addressed in the post body — look at the H2 headings and content and avoid duplicating those topics
+- Format each as: ### Question text? followed by a concise 2-4 sentence answer
+- Questions should be genuinely useful and reflect real search intent around the topic
 
 OUTPUT FORMAT:
 - Clean markdown only — start directly with the # title, no preamble or commentary
