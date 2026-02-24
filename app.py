@@ -566,6 +566,24 @@ st.markdown("""
 
 if "results" not in st.session_state:
     st.session_state["results"] = []
+if "url_queue" not in st.session_state:
+    st.session_state["url_queue"] = []
+if "processing" not in st.session_state:
+    st.session_state["processing"] = False
+if "proc_domain" not in st.session_state:
+    st.session_state["proc_domain"] = ""
+if "proc_api_key" not in st.session_state:
+    st.session_state["proc_api_key"] = ""
+if "proc_site_pages" not in st.session_state:
+    st.session_state["proc_site_pages"] = []
+if "total_urls" not in st.session_state:
+    st.session_state["total_urls"] = 0
+if "total_cost_usd" not in st.session_state:
+    st.session_state["total_cost_usd"] = 0.0
+if "total_input_tok" not in st.session_state:
+    st.session_state["total_input_tok"] = 0
+if "total_output_tok" not in st.session_state:
+    st.session_state["total_output_tok"] = 0
 
 # ---------------------------------------------------------------------------
 # Input form
@@ -614,7 +632,6 @@ with st.form("revival_form"):
 # ---------------------------------------------------------------------------
 
 if submitted:
-    st.session_state["results"] = []  # Clear previous results on new run
     errors = []
     if not domain.strip():
         errors.append("Please enter your website domain.")
@@ -641,13 +658,10 @@ if submitted:
         st.stop()
 
     try:
-        client = anthropic.Anthropic(api_key=api_key.strip())
+        anthropic.Anthropic(api_key=api_key.strip())
     except Exception as e:
         st.error(f"Failed to initialize Anthropic client: {e}")
         st.stop()
-
-    output_dir = Path("output")
-    output_dir.mkdir(exist_ok=True)
 
     # ── Step 1: Sitemap ─────────────────────────────────────────────────
     st.markdown("""
@@ -668,142 +682,138 @@ if submitted:
             "Make sure your sitemap is at `/sitemap.xml` or declared in `robots.txt`."
         )
 
-    # ── Step 2: Process posts ────────────────────────────────────────────
+    # Set up incremental processing queue
+    st.session_state["results"] = []
+    st.session_state["url_queue"] = list(urls)
+    st.session_state["total_urls"] = len(urls)
+    st.session_state["processing"] = True
+    st.session_state["proc_domain"] = domain.strip()
+    st.session_state["proc_api_key"] = api_key.strip()
+    st.session_state["proc_site_pages"] = site_pages
+    st.session_state["total_cost_usd"] = 0.0
+    st.session_state["total_input_tok"] = 0
+    st.session_state["total_output_tok"] = 0
+    st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Step 2: Incremental processing (one URL per rerun — enables stop button)
+# ---------------------------------------------------------------------------
+
+if st.session_state.get("processing"):
+    queue      = st.session_state["url_queue"]
+    total      = st.session_state["total_urls"]
+    done_count = len(st.session_state["results"])
+
     st.markdown(f"""
     <div class="step-header">
       <span class="step-num">02</span>
-      <span class="step-title">Processing {len(urls)} Post{"s" if len(urls) != 1 else ""}</span>
+      <span class="step-title">Processing {total} Post{"s" if total != 1 else ""}</span>
     </div>
     """, unsafe_allow_html=True)
 
-    progress_bar = st.progress(0, text="Initialising...")
+    # Stop button — detected at the start of the next rerun
+    if st.button("Stop processing", type="secondary"):
+        st.session_state["processing"] = False
+        st.session_state["url_queue"] = []
+        st.rerun()
 
-    # Live cost counter
-    cost_col1, cost_col2, cost_col3 = st.columns(3)
-    total_cost_display    = cost_col1.empty()
-    total_tokens_display  = cost_col2.empty()
-    posts_done_display    = cost_col3.empty()
+    progress_val = done_count / total if total > 0 else 0
+    current_url  = queue[0] if queue else ""
+    progress_text = (
+        f"Post {done_count + 1} of {total}  ·  {current_url}"
+        if queue else "All posts processed."
+    )
+    st.progress(progress_val, text=progress_text)
 
-    total_cost_usd    = 0.0
-    total_input_tok   = 0
-    total_output_tok  = 0
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Est. API cost",  f"${st.session_state['total_cost_usd']:.4f}")
+    col2.metric("Tokens used",    f"{st.session_state['total_input_tok'] + st.session_state['total_output_tok']:,}")
+    col3.metric("Posts done",     f"{done_count} / {total}")
 
-    results = []
+    if queue:
+        url    = queue.pop(0)
+        domain = st.session_state["proc_domain"]
+        client = anthropic.Anthropic(api_key=st.session_state["proc_api_key"])
+        site_pages = st.session_state["proc_site_pages"]
 
-    def _render_cost():
-        total_cost_display.markdown(
-            f'<div style="font-family:var(--font-mono);font-size:0.7rem;letter-spacing:0.1em;'
-            f'text-transform:uppercase;color:var(--tx-2);margin-bottom:2px">Est. API cost</div>'
-            f'<div style="font-family:var(--font-mono);font-size:1.5rem;color:var(--green)">'
-            f'${total_cost_usd:.4f}</div>',
-            unsafe_allow_html=True,
-        )
-        total_tokens_display.markdown(
-            f'<div style="font-family:var(--font-mono);font-size:0.7rem;letter-spacing:0.1em;'
-            f'text-transform:uppercase;color:var(--tx-2);margin-bottom:2px">Tokens used</div>'
-            f'<div style="font-family:var(--font-mono);font-size:1.5rem;color:var(--tx)">'
-            f'{(total_input_tok + total_output_tok):,}</div>',
-            unsafe_allow_html=True,
-        )
-        posts_done_display.markdown(
-            f'<div style="font-family:var(--font-mono);font-size:0.7rem;letter-spacing:0.1em;'
-            f'text-transform:uppercase;color:var(--tx-2);margin-bottom:2px">Posts done</div>'
-            f'<div style="font-family:var(--font-mono);font-size:1.5rem;color:var(--tx)">'
-            f'{len([r for r in results if not r.get("error")])} / {len(urls)}</div>',
-            unsafe_allow_html=True,
-        )
+        output_dir = Path("output")
+        output_dir.mkdir(exist_ok=True)
 
-    _render_cost()
-
-    for i, url in enumerate(urls):
-        progress_bar.progress(i / len(urls), text=f"Post {i + 1} of {len(urls)}  ·  {url}")
-
-        with st.status(f"{url}", expanded=True) as status:
+        with st.status(f"Processing: {url}", expanded=True) as status:
 
             st.write("Fetching content...")
             post = fetch_post(url)
 
             if post.get("error"):
                 st.error(f"Fetch failed: {post['error']}")
-                status.update(label=f"✗  {url}", state="error", expanded=False)
-                results.append({"url": url, "error": post["error"]})
-                _render_cost()
-                continue
+                status.update(label=f"Failed: {url}", state="error", expanded=False)
+                st.session_state["results"].append({"url": url, "error": post["error"]})
+            else:
+                st.write(
+                    f"Fetched — **{post['word_count']} words**, "
+                    f"{len(post['headings'])} headings, "
+                    f"{len(post['internal_links'])} internal / {len(post['external_links'])} external links"
+                )
 
-            st.write(
-                f"Fetched — **{post['word_count']} words**, "
-                f"{len(post['headings'])} headings, "
-                f"{len(post['internal_links'])} internal / {len(post['external_links'])} external links"
-            )
+                st.write("Running SEO audit (pass 1 of 2)...")
+                try:
+                    audit, usage_a = analyze_post(post, site_pages, client, domain=domain)
+                    st.session_state["total_cost_usd"]   += usage_a["cost_usd"]
+                    st.session_state["total_input_tok"]  += usage_a["input_tokens"]
+                    st.session_state["total_output_tok"] += usage_a["output_tokens"]
 
-            st.write("Running SEO audit  (pass 1 of 2)...")
-            try:
-                audit, usage_a = analyze_post(post, site_pages, client, domain=domain.strip())
-            except Exception as e:
-                st.error(f"Audit failed: {e}")
-                status.update(label=f"✗  {url}", state="error", expanded=False)
-                results.append({"url": url, "error": f"Audit: {e}"})
-                _render_cost()
-                continue
+                    verdict     = audit.get("verdict", "unknown")
+                    thin_count  = len(audit.get("thin_sections", []))
+                    missing_int = len(audit.get("missing_internal_links", []))
+                    st.write(f"Audit done — verdict: **{verdict}** · {thin_count} thin section(s) · {missing_int} link gap(s)")
 
-            total_cost_usd   += usage_a["cost_usd"]
-            total_input_tok  += usage_a["input_tokens"]
-            total_output_tok += usage_a["output_tokens"]
-            _render_cost()
+                    st.write("Rewriting with capsule content technique (pass 2 of 2)...")
+                    rewritten, usage_r = rewrite_post(post, audit, site_pages, client, domain=domain)
+                    st.session_state["total_cost_usd"]   += usage_r["cost_usd"]
+                    st.session_state["total_input_tok"]  += usage_r["input_tokens"]
+                    st.session_state["total_output_tok"] += usage_r["output_tokens"]
 
-            verdict    = audit.get("verdict", "unknown")
-            thin_count = len(audit.get("thin_sections", []))
-            missing_int = len(audit.get("missing_internal_links", []))
-            st.write(
-                f"Audit done — verdict: **{verdict}**  ·  "
-                f"{thin_count} thin section(s)  ·  {missing_int} link gap(s)"
-            )
+                    new_word_count = len(rewritten.split())
+                    output_dir.joinpath(f"{post['slug']}-rewritten.md").write_text(rewritten, encoding="utf-8")
 
-            st.write("Rewriting with capsule content technique  (pass 2 of 2)...")
-            try:
-                rewritten, usage_r = rewrite_post(post, audit, site_pages, client, domain=domain.strip())
-            except Exception as e:
-                st.error(f"Rewrite failed: {e}")
-                status.update(label=f"✗  {url}", state="error", expanded=False)
-                results.append({"url": url, "error": f"Rewrite: {e}"})
-                _render_cost()
-                continue
+                    internal_links_added = rewritten.count(f"]({domain.rstrip('/')}")
+                    external_links_added = rewritten.count("](https://") - internal_links_added
 
-            total_cost_usd   += usage_r["cost_usd"]
-            total_input_tok  += usage_r["input_tokens"]
-            total_output_tok += usage_r["output_tokens"]
+                    st.session_state["results"].append({
+                        "url": url,
+                        "title": post["title"],
+                        "slug": post["slug"],
+                        "word_count_before": post["word_count"],
+                        "word_count_after": new_word_count,
+                        "internal_links_added": internal_links_added,
+                        "external_links_added": external_links_added,
+                        "audit": audit,
+                        "rewritten": rewritten,
+                        "error": None,
+                    })
 
-            new_word_count = len(rewritten.split())
-            output_file = output_dir / f"{post['slug']}-rewritten.md"
-            output_file.write_text(rewritten, encoding="utf-8")
+                    status.update(
+                        label=f"Done: {post['title'] or url}  ({post['word_count']} → {new_word_count} words)",
+                        state="complete",
+                        expanded=False,
+                    )
 
-            # Count links - internal uses full domain, external are real https links
-            internal_links_added = rewritten.count(f"]({domain.strip().rstrip('/')}")
-            external_links_added = rewritten.count("](https://") - internal_links_added
+                except Exception as e:
+                    st.error(f"Processing failed: {e}")
+                    status.update(label=f"Failed: {url}", state="error", expanded=False)
+                    st.session_state["results"].append({"url": url, "error": str(e)})
 
-            results.append({
-                "url": url,
-                "title": post["title"],
-                "slug": post["slug"],
-                "word_count_before": post["word_count"],
-                "word_count_after": new_word_count,
-                "internal_links_added": internal_links_added,
-                "external_links_added": external_links_added,
-                "audit": audit,
-                "rewritten": rewritten,
-                "error": None,
-            })
+        st.session_state["url_queue"] = queue
 
-            _render_cost()
-            status.update(
-                label=f"✓  {post['title'] or url}  ({post['word_count']} → {new_word_count} words)",
-                state="complete",
-                expanded=False,
-            )
+        if not queue:
+            st.session_state["processing"] = False
 
-    progress_bar.progress(1.0, text="All posts processed.")
-    _render_cost()
-    st.session_state["results"] = results
+        st.rerun()
+
+    else:
+        st.session_state["processing"] = False
+        st.rerun()
 
 
 # ---------------------------------------------------------------------------
