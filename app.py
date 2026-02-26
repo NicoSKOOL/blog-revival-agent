@@ -780,6 +780,8 @@ if st.session_state.get("processing"):
                     internal_links_added = rewritten.count(f"]({domain.rstrip('/')}")
                     external_links_added = rewritten.count("](https://") - internal_links_added
 
+                    post_cost = usage_a["cost_usd"] + usage_r["cost_usd"]
+
                     st.session_state["results"].append({
                         "url": url,
                         "title": post["title"],
@@ -790,6 +792,7 @@ if st.session_state.get("processing"):
                         "external_links_added": external_links_added,
                         "audit": audit,
                         "rewritten": rewritten,
+                        "cost_usd": post_cost,
                         "error": None,
                     })
 
@@ -844,8 +847,11 @@ if st.session_state.get("results"):
 
     # Summary table
     summary_rows = []
+    total_cost = 0.0
     for r in successful:
         delta = r["word_count_after"] - r["word_count_before"]
+        cost = r.get("cost_usd", 0.0)
+        total_cost += cost
         summary_rows.append({
             "Title":              r.get("title", r["url"]),
             "Words before":       r["word_count_before"],
@@ -854,9 +860,18 @@ if st.session_state.get("results"):
             "Internal links":     r["internal_links_added"],
             "External links":     r["external_links_added"],
             "Original verdict":   r["audit"].get("verdict", ""),
+            "API cost":           f"${cost:.4f}",
         })
 
     st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
+
+    st.markdown(
+        f'<div style="font-family:var(--font-mono);font-size:0.82rem;color:var(--tx-2);'
+        f'text-align:right;margin-top:-0.5rem;padding-right:0.5rem;">'
+        f'Total API cost: <strong style="color:var(--green)">${total_cost:.4f}</strong>'
+        f'  ({len(successful)} post{"s" if len(successful) != 1 else ""})</div>',
+        unsafe_allow_html=True,
+    )
 
     # Per-post previews
     st.markdown('<div class="results-heading">Rewritten Posts</div>', unsafe_allow_html=True)
@@ -895,10 +910,15 @@ if st.session_state.get("results"):
 
             with col_b:
                 st.markdown('<div class="section-label">Stats</div>', unsafe_allow_html=True)
-                st.metric(
+                m1, m2 = st.columns(2)
+                m1.metric(
                     "Word count",
                     f"{r['word_count_after']:,}",
                     delta=r["word_count_after"] - r["word_count_before"],
+                )
+                m2.metric(
+                    "API cost",
+                    f"${r.get('cost_usd', 0.0):.4f}",
                 )
                 st.markdown(
                     f'<div class="audit-row"><span class="audit-icon">▸</span>'
