@@ -2,9 +2,22 @@ import re
 import requests
 from bs4 import BeautifulSoup
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; BlogRevivalBot/1.0; +https://airanking.com)"
-}
+# Try multiple header sets. Some Cloudflare configs block cloud IPs with
+# bot-style UAs but allow browser-like UAs, and vice versa.
+_HEADER_SETS = [
+    {
+        "User-Agent": "Mozilla/5.0 (compatible; BlogRevivalBot/1.0; +https://airanking.com)",
+    },
+    {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    },
+]
 
 CONTENT_SELECTORS = [
     ".post-content",
@@ -24,13 +37,33 @@ CONTENT_SELECTORS = [
 _MIN_CONTENT_WORDS = 100
 
 
+def _is_blocked_page(html: str) -> bool:
+    """Detect Cloudflare challenge/block pages that return 200."""
+    lower = html[:5000].lower()
+    signals = ["just a moment", "checking your browser", "cf-challenge", "challenge-platform"]
+    return any(s in lower for s in signals)
+
+
 def fetch_post(url: str) -> dict:
     """Fetch a blog post URL and return structured content."""
-    try:
-        response = requests.get(url, headers=HEADERS, timeout=15)
-        response.raise_for_status()
-    except Exception as e:
-        return {"error": str(e), "url": url}
+    response = None
+    last_error = None
+
+    for headers in _HEADER_SETS:
+        try:
+            resp = requests.get(url, headers=headers, timeout=20)
+            resp.raise_for_status()
+            if _is_blocked_page(resp.text):
+                last_error = "Cloudflare blocked the request (challenge page returned)"
+                continue
+            response = resp
+            break
+        except Exception as e:
+            last_error = str(e)
+            continue
+
+    if response is None:
+        return {"error": last_error or "Failed to fetch the page", "url": url}
 
     soup = BeautifulSoup(response.text, "html.parser")
 
