@@ -1,6 +1,9 @@
 import io
+import base64
 import zipfile
 from pathlib import Path
+
+import markdown as _md
 
 import pandas as pd
 import streamlit as st
@@ -534,6 +537,42 @@ hr {
   margin: 1.5rem 0 0.75rem 0;
 }
 
+/* ── Copy button ─────────────────────────────────────────────────────── */
+.copy-btn {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: transparent;
+  color: var(--green);
+  border: 1px solid var(--green);
+  border-radius: 4px;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.copy-btn:hover {
+  background: var(--green-dim);
+  box-shadow: 0 0 12px var(--green-glow);
+}
+
+.copy-btn.copied {
+  background: var(--green);
+  color: #030808;
+  border-color: var(--green);
+}
+
+.post-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -883,6 +922,104 @@ if st.session_state.get("results"):
 
         with st.expander(label, expanded=False):
             audit = r["audit"]
+
+            _html_content = _md.markdown(
+                r["rewritten"],
+                extensions=["tables", "fenced_code"],
+            )
+            _b64_html = base64.b64encode(_html_content.encode()).decode()
+            _b64_plain = base64.b64encode(r["rewritten"].encode()).decode()
+            st.components.v1.html(f"""
+            <style>
+              @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
+              body {{ margin: 0; padding: 0; background: transparent; }}
+              .copy-wrap {{
+                display: flex; align-items: center; gap: 0.6rem;
+              }}
+              .copy-btn {{
+                font-family: 'JetBrains Mono', monospace;
+                font-size: 0.72rem; font-weight: 500;
+                letter-spacing: 0.08em; text-transform: uppercase;
+                background: transparent; color: #3dffa0;
+                border: 1px solid #3dffa0; border-radius: 4px;
+                padding: 0.35rem 0.75rem; cursor: pointer;
+                transition: all 0.2s ease;
+                position: relative; overflow: hidden;
+              }}
+              .copy-btn:hover {{
+                background: #0d3325;
+                box-shadow: 0 0 12px rgba(61,255,160,0.15);
+              }}
+              .copy-btn:active {{
+                transform: scale(0.95);
+              }}
+              .copy-btn.copied {{
+                background: #3dffa0; color: #030808;
+                border-color: #3dffa0;
+                animation: pop 0.35s ease;
+              }}
+              @keyframes pop {{
+                0%   {{ transform: scale(1); }}
+                40%  {{ transform: scale(1.1); }}
+                70%  {{ transform: scale(0.95); }}
+                100% {{ transform: scale(1); }}
+              }}
+              .checkmark {{
+                display: inline-block; opacity: 0;
+                transition: opacity 0.2s ease;
+                margin-right: 0.3rem;
+              }}
+              .copy-btn.copied .checkmark {{
+                opacity: 1;
+              }}
+            </style>
+            <div class="copy-wrap">
+              <button class="copy-btn" id="cpbtn" onclick="copyContent()">
+                <span class="checkmark" id="check">&#10003;</span>
+                <span id="label">Copy content</span>
+              </button>
+            </div>
+            <script>
+              function copyContent() {{
+                const html = atob("{_b64_html}");
+                const plain = atob("{_b64_plain}");
+                const btn = document.getElementById('cpbtn');
+                const label = document.getElementById('label');
+
+                const blob = new Blob([html], {{ type: 'text/html' }});
+                const plainBlob = new Blob([plain], {{ type: 'text/plain' }});
+                const item = new ClipboardItem({{
+                  'text/html': blob,
+                  'text/plain': plainBlob
+                }});
+
+                navigator.clipboard.write([item]).then(() => {{
+                  btn.classList.add('copied');
+                  label.textContent = 'Copied!';
+                  setTimeout(() => {{
+                    btn.classList.remove('copied');
+                    label.textContent = 'Copy content';
+                  }}, 2200);
+                }}).catch(() => {{
+                  // Fallback: copy plain markdown
+                  const ta = document.createElement('textarea');
+                  ta.value = plain;
+                  ta.style.position = 'fixed';
+                  ta.style.left = '-9999px';
+                  document.body.appendChild(ta);
+                  ta.select();
+                  document.execCommand('copy');
+                  document.body.removeChild(ta);
+                  btn.classList.add('copied');
+                  label.textContent = 'Copied!';
+                  setTimeout(() => {{
+                    btn.classList.remove('copied');
+                    label.textContent = 'Copy content';
+                  }}, 2200);
+                }});
+              }}
+            </script>
+            """, height=42)
 
             col_a, col_b = st.columns([3, 2], gap="large")
 
