@@ -7,8 +7,6 @@ HEADERS = {
 }
 
 CONTENT_SELECTORS = [
-    "article",
-    "main",
     ".post-content",
     ".entry-content",
     ".post-body",
@@ -17,7 +15,13 @@ CONTENT_SELECTORS = [
     ".single-post",
     "#content",
     ".content",
+    "article",
+    "main",
 ]
+
+# Minimum word count to accept a content area as the real post body.
+# Prevents grabbing tiny related-post cards or sidebar widgets.
+_MIN_CONTENT_WORDS = 100
 
 
 def fetch_post(url: str) -> dict:
@@ -38,12 +42,15 @@ def fetch_post(url: str) -> dict:
     elif soup.title:
         title = soup.title.get_text(strip=True)
 
-    # Find main content area - try selectors in order
+    # Find main content area - try selectors in order, skip tiny matches
     content_area = None
     for selector in CONTENT_SELECTORS:
-        content_area = soup.select_one(selector)
-        if content_area:
-            break
+        candidate = soup.select_one(selector)
+        if candidate:
+            words = len(candidate.get_text(strip=True).split())
+            if words >= _MIN_CONTENT_WORDS:
+                content_area = candidate
+                break
     if not content_area:
         content_area = soup.body or soup
 
