@@ -23,6 +23,8 @@ _HEADER_SETS = [
 CONTENT_SELECTORS = [
     ".post-content",
     ".entry-content",
+    ".et_pb_post_content",
+    ".et_pb_text_inner",
     ".post-body",
     ".article-body",
     ".blog-post",
@@ -39,6 +41,10 @@ _MIN_CONTENT_WORDS = 100
 
 # Below this threshold after extraction, the page is likely blocked or empty.
 _MIN_USABLE_WORDS = 50
+
+# Responses shorter than this (bytes) are likely soft-blocks (e.g. LiteSpeed
+# returning 200 with an empty or near-empty body).
+_SOFT_BLOCK_BYTES = 500
 
 
 def _is_blocked_page(html: str) -> bool:
@@ -72,8 +78,13 @@ def _try_wp_api(url: str) -> dict | None:
 
     try:
         resp = requests.get(api_url, timeout=15, headers={
-            "User-Agent": "BlogRevivalBot/1.0",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
             "Accept": "application/json",
+            "Accept-Language": "en-US,en;q=0.9",
         })
         resp.raise_for_status()
         posts = resp.json()
@@ -157,15 +168,28 @@ def fetch_post(url: str) -> dict:
     slug = path.split("/")[-1] if "/" in path else path or "post"
 
     # -- Attempt 1: direct HTML fetch with header rotation --
+    # Use a session so cookies (e.g. LiteSpeed LSCWP) persist across requests.
     response = None
     last_error = None
+    homepage = f"{parsed.scheme}://{parsed.netloc}/"
 
     for headers in _HEADER_SETS:
         try:
-            resp = requests.get(url, headers=headers, timeout=20)
+            session = requests.Session()
+            session.headers.update(headers)
+            # Hit the homepage first to pick up anti-bot cookies
+            try:
+                session.get(homepage, timeout=10)
+            except Exception:
+                pass  # cookie priming is best-effort
+            resp = session.get(url, timeout=20)
             resp.raise_for_status()
             if _is_blocked_page(resp.text):
                 last_error = "Cloudflare blocked the request (challenge page returned)"
+                continue
+            # Detect soft-blocks: 200 but near-empty body
+            if len(resp.content) < _SOFT_BLOCK_BYTES:
+                last_error = "Server returned a near-empty response (likely soft-blocked)"
                 continue
             response = resp
             break
